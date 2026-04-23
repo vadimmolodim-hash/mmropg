@@ -1,0 +1,15 @@
+{
+  "name": "mmorpg-telegram-bot",
+  "version": "1.0.0",
+  "main": "bot.js",
+  "scripts": {
+    "start": "node bot.js",
+    "dev": "nodemon bot.js"
+  },
+  "dependencies": {
+    "grammy": "^1.21.1"
+  },
+  "devDependencies": {
+    "nodemon": "^3.0.3"
+  }
+}
