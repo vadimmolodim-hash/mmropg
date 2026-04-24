@@ -29,8 +29,8 @@
         #chat { position: fixed; bottom: 180px; left: 8px; max-width: 280px; max-height: 200px; overflow-y: auto; pointer-events: none; }
         .chat-msg { background: rgba(0,0,0,0.6); color: #fff; padding: 4px 8px; border-radius: 6px; margin: 2px 0; font-size: 12px; word-break: break-word; }
         .chat-msg .name { color: #f39c12; font-weight: bold; }
-        #loading, #auth-error, #death-screen { position: fixed; inset: 0; display: flex; flex-direction: column; align-items: center; justify-content: center; background: #0a0a1a; color: #fff; z-index: 100; }
-        #loading.hidden, #auth-error.hidden, #death-screen.hidden { display: none; }
+        #loading, #auth-error, #death-screen, #error-screen { position: fixed; inset: 0; display: flex; flex-direction: column; align-items: center; justify-content: center; background: #0a0a1a; color: #fff; z-index: 100; }
+        #loading.hidden, #auth-error.hidden, #death-screen.hidden, #error-screen.hidden { display: none; }
         .spinner { width: 50px; height: 50px; border: 4px solid rgba(255,255,255,0.1); border-top-color: #f39c12; border-radius: 50%; animation: spin 1s linear infinite; margin-bottom: 20px; }
         @keyframes spin { to { transform: rotate(360deg); } }
         .btn-primary { padding: 12px 32px; background: #f39c12; color: #fff; border: none; border-radius: 8px; font-size: 16px; cursor: pointer; margin-top: 16px; }
@@ -40,12 +40,16 @@
         @keyframes toastOut { to { opacity: 0; transform: translate(-50%, -150%) scale(1); } }
         .damage-text { position: fixed; color: #e74c3c; font-size: 18px; font-weight: bold; text-shadow: 0 0 4px #000; pointer-events: none; animation: dmgFloat 1s ease-out forwards; z-index: 30; }
         @keyframes dmgFloat { 0% { opacity: 1; transform: translateY(0); } 100% { opacity: 0; transform: translateY(-40px); } }
+        #debug-info { position: fixed; top: 50%; left: 50%; transform: translate(-50%, -50%); background: rgba(0,0,0,0.9); color: #fff; padding: 20px; border-radius: 12px; font-size: 14px; z-index: 200; max-width: 80%; word-break: break-all; }
+        #debug-info button { margin-top: 10px; }
     </style>
 </head>
 <body>
-    <div id="loading"><div class="spinner"></div><div>Подключение к серверу...</div></div>
+    <div id="loading"><div class="spinner"></div><div id="loading-text">Подключение к серверу...</div></div>
     <div id="auth-error" class="hidden"><div style="font-size:48px;margin-bottom:16px;">🔒</div><div>Ошибка авторизации</div><div style="color:#888;margin-top:8px;font-size:14px;">Откройте игру через Telegram</div></div>
     <div id="death-screen" class="hidden"><div style="font-size:64px;margin-bottom:16px;">☠️</div><div style="font-size:24px;color:#e74c3c;margin-bottom:8px;">Вы погибли!</div><div id="death-info" style="color:#888;margin-bottom:16px;"></div><button class="btn-primary" onclick="respawn()">Возродиться</button></div>
+    <div id="error-screen" class="hidden"><div style="font-size:48px;margin-bottom:16px;">⚠️</div><div id="error-text">Ошибка подключения</div><button class="btn-primary" onclick="location.reload()">Перезагрузить</button></div>
+
     <canvas id="gameCanvas"></canvas>
     <div id="ui">
         <div class="bar-container">
@@ -73,7 +77,20 @@
     <div id="chat"></div>
 
 <script>
-const SERVER_URL = 'https://mmorpg-server-production.up.railway.app'; // <-- ВСТАВЬ URL СЕРВЕРА
+// ============================================
+// 🔧 КОНФИГ - ЗАМЕНИ НА СВОЙ URL СЕРВЕРА!
+// ============================================
+const SERVER_URL = 'mmropg-server-production.up.railway.app'; // <-- ВСТАВЬ URL СВОЕГО СЕРВЕРА (НЕ КЛИЕНТА!)
+
+// Проверка URL
+if (SERVER_URL.includes('твой') || SERVER_URL.includes('mmropg-production')) {
+    console.error('❌ ОШИБКА: Нужно указать URL СЕРВЕРА, а не клиента!');
+    console.error('Текущий URL:', SERVER_URL);
+    document.getElementById('loading').innerHTML = '<div id="debug-info"><div style="color:#e74c3c;font-size:18px;margin-bottom:10px;">❌ Неправильный URL сервера!</div><div>Текущий: <code>' + SERVER_URL + '</code></div><br><div style="color:#888;">Нужно указать URL проекта с server.js (Node.js),<br>а не проекта с index.html (клиент).</div><br><div style="color:#f39c12;">В Railway должно быть ДВА проекта:<br>1. Сервер (Node.js)<br>2. Клиент (HTML)</div><br><button class="btn-primary" onclick="location.reload()">Перезагрузить</button></div>';
+    throw new Error('Wrong server URL');
+}
+
+console.log('🎮 Connecting to:', SERVER_URL);
 
 let tg = null, initData = '';
 if (window.Telegram && window.Telegram.WebApp) {
@@ -82,6 +99,11 @@ if (window.Telegram && window.Telegram.WebApp) {
     tg.setHeaderColor('#0a0a1a');
     tg.ready();
     initData = tg.initData;
+    console.log('✅ Telegram WebApp detected');
+} else {
+    console.warn('⚠️ Not in Telegram, using test data');
+    // Тестовые данные для разработки
+    initData = 'user=%7B%22id%22%3A123456789%2C%22first_name%22%3A%22TestPlayer%22%2C%22username%22%3A%22test%22%7D&hash=test&auth_date=' + Math.floor(Date.now()/1000);
 }
 
 const canvas = document.getElementById('gameCanvas');
@@ -99,39 +121,96 @@ let particles = [], damageTexts = [], attackAnim = 0, skillAnim = 0;
 let joystick = { active: false, dx: 0, dy: 0 };
 
 function connect() {
-    socket = io(SERVER_URL);
-    socket.on('connect', () => { console.log('Connected'); socket.emit('auth', { initData }); });
-    socket.on('auth_success', (data) => {
-        document.getElementById('loading').classList.add('hidden');
-        player = data.player; myId = player.id; worldSize = data.worldSize;
-        showToast(`Добро пожаловать, ${player.name}!`);
+    console.log('🔌 Connecting to server...');
+    document.getElementById('loading-text').textContent = 'Подключение к ' + SERVER_URL + '...';
+
+    try {
+        socket = io(SERVER_URL, {
+            timeout: 10000,
+            transports: ['websocket', 'polling']
+        });
+    } catch (e) {
+        console.error('❌ Failed to create socket:', e);
+        showError('Не удалось создать подключение: ' + e.message);
+        return;
+    }
+
+    socket.on('connect', () => {
+        console.log('✅ Socket connected');
+        document.getElementById('loading-text').textContent = 'Авторизация...';
+        socket.emit('auth', { initData });
     });
-    socket.on('auth_error', () => {
+
+    socket.on('connect_error', (err) => {
+        console.error('❌ Connection error:', err.message);
+        document.getElementById('loading-text').textContent = 'Ошибка: ' + err.message;
+    });
+
+    socket.on('auth_success', (data) => {
+        console.log('✅ Auth success:', data);
+        document.getElementById('loading').classList.add('hidden');
+        player = data.player;
+        myId = player.id;
+        worldSize = data.worldSize;
+        showToast('Добро пожаловать, ' + player.name + '!');
+    });
+
+    socket.on('auth_error', (msg) => {
+        console.error('❌ Auth error:', msg);
         document.getElementById('loading').classList.add('hidden');
         document.getElementById('auth-error').classList.remove('hidden');
     });
+
     socket.on('world_update', (state) => {
-        serverPlayers = state.players; serverEnemies = state.enemies; serverItems = state.items;
-        const me = state.players.find(p => p.id === myId);
-        if (me) { player.hp = me.hp; player.maxHp = me.maxHp; player.level = me.level; updateUI(); }
-        document.getElementById('onlineText').textContent = state.players.length;
+        serverPlayers = state.players || [];
+        serverEnemies = state.enemies || [];
+        serverItems = state.items || [];
+        const me = serverPlayers.find(p => p.id === myId);
+        if (me) {
+            player.hp = me.hp;
+            player.maxHp = me.maxHp;
+            player.level = me.level;
+            updateUI();
+        }
+        document.getElementById('onlineText').textContent = serverPlayers.length;
     });
+
     socket.on('damage_taken', (data) => {
         showDamageText(data.amount, canvas.width / 2, canvas.height / 2 - 30);
         canvas.style.transform = 'translate(3px, 3px)'; setTimeout(() => canvas.style.transform = '', 50);
     });
-    socket.on('enemy_killed', (data) => { showToast(`+${data.xp} XP, +${data.gold} 💰`); addParticles(player.x, player.y, '#f1c40f', 10); });
-    socket.on('level_up', (data) => { showToast(`🎉 УРОВЕНЬ ${data.level}!`); addParticles(player.x, player.y, '#f39c12', 20); });
+
+    socket.on('enemy_killed', (data) => {
+        showToast('+' + data.xp + ' XP, +' + data.gold + ' 💰');
+        addParticles(player.x, player.y, '#f1c40f', 10);
+    });
+
+    socket.on('level_up', (data) => {
+        showToast('🎉 УРОВЕНЬ ' + data.level + '!');
+        addParticles(player.x, player.y, '#f39c12', 20);
+    });
+
     socket.on('death', (data) => {
-        document.getElementById('death-info').textContent = `Уровень: ${data.level} | Потеряно золота: ${data.goldLost}`;
+        document.getElementById('death-info').textContent = 'Уровень: ' + data.level + ' | Потеряно золота: ' + data.goldLost;
         document.getElementById('death-screen').classList.remove('hidden');
     });
-    socket.on('item_picked', (data) => { showToast(data.type === 'gold' ? `+${data.amount} 💰` : 'Зелье выпито!'); });
-    socket.on('chat_message', (msg) => addChatMessage(msg));
-    socket.on('disconnect', () => {
-        document.getElementById('loading').classList.remove('hidden');
-        document.querySelector('#loading div:last-child').textContent = 'Переподключение...';
+
+    socket.on('item_picked', (data) => {
+        showToast(data.type === 'gold' ? '+' + data.amount + ' 💰' : 'Зелье выпито!');
     });
+
+    socket.on('chat_message', (msg) => addChatMessage(msg));
+
+    socket.on('disconnect', (reason) => {
+        console.log('❌ Disconnected:', reason);
+        document.getElementById('loading').classList.remove('hidden');
+        document.querySelector('#loading-text').textContent = 'Переподключение... (' + reason + ')';
+    });
+}
+
+function showError(msg) {
+    document.getElementById('error-text').textContent = msg;
+    document.getElementById('error-screen').classList.remove('hidden');
 }
 
 const joyZone = document.getElementById('joystick-zone');
@@ -155,7 +234,7 @@ function updateJoystick(x, y) {
     let dx = x - joyStart.x, dy = y - joyStart.y;
     const dist = Math.hypot(dx, dy);
     if (dist > maxDist) { dx = (dx / dist) * maxDist; dy = (dy / dist) * maxDist; }
-    joyKnob.style.transform = `translate(calc(-50% + ${dx}px), calc(-50% + ${dy}px))`;
+    joyKnob.style.transform = 'translate(calc(-50% + ' + dx + 'px), calc(-50% + ' + dy + 'px))';
     if (dist > 5) { joystick.dx = dx / maxDist; joystick.dy = dy / maxDist; }
     else { joystick.dx = 0; joystick.dy = 0; }
 }
@@ -205,7 +284,23 @@ function update() {
 }
 
 function draw() {
-    const W = canvas.width, H = canvas.height, cx = camera.x, cy = camera.y;
+    const W = canvas.width, H = canvas.height;
+
+    // Если игрок не загружен - рисуем экран загрузки
+    if (!player) {
+        ctx.fillStyle = '#0a0a1a';
+        ctx.fillRect(0, 0, W, H);
+        ctx.fillStyle = '#fff';
+        ctx.font = '20px sans-serif';
+        ctx.textAlign = 'center';
+        ctx.fillText('Подключение к серверу...', W / 2, H / 2);
+        ctx.fillStyle = '#888';
+        ctx.font = '14px sans-serif';
+        ctx.fillText(SERVER_URL, W / 2, H / 2 + 30);
+        return;
+    }
+
+    const cx = camera.x, cy = camera.y;
     ctx.fillStyle = '#2d5a27'; ctx.fillRect(0, 0, W, H);
     ctx.fillStyle = '#3d6b32';
     const gridSize = 40, startX = Math.floor(cx / gridSize) * gridSize, startY = Math.floor(cy / gridSize) * gridSize;
@@ -229,18 +324,18 @@ function draw() {
         const sx = item.x - cx, sy = item.y - cy;
         if (sx < -20 || sx > W + 20 || sy < -20 || sy > H + 20) return;
         const pulse = Math.sin(Date.now() * 0.005) * 3;
-        ctx.font = '18px sans-serif'; ctx.textAlign = 'center'; ctx.fillText(item.icon, sx, sy + pulse);
+        ctx.font = '18px sans-serif'; ctx.textAlign = 'center'; ctx.fillText(item.icon || '💎', sx, sy + pulse);
         ctx.strokeStyle = 'rgba(255,255,255,0.2)'; ctx.lineWidth = 1; ctx.beginPath(); ctx.arc(sx, sy, 10 + pulse * 0.3, 0, Math.PI * 2); ctx.stroke();
     });
     serverEnemies.forEach(e => {
         const sx = e.x - cx, sy = e.y - cy;
         if (sx < -50 || sx > W + 50 || sy < -50 || sy > H + 50) return;
         ctx.fillStyle = 'rgba(0,0,0,0.2)'; ctx.beginPath(); ctx.ellipse(sx, sy + e.size * 0.8, e.size * 0.8, e.size * 0.25, 0, 0, Math.PI * 2); ctx.fill();
-        ctx.fillStyle = e.hitFlash > 0 ? '#fff' : e.color; ctx.beginPath(); ctx.arc(sx, sy, e.size, 0, Math.PI * 2); ctx.fill();
+        ctx.fillStyle = e.hitFlash > 0 ? '#fff' : (e.color || '#2ecc71'); ctx.beginPath(); ctx.arc(sx, sy, e.size, 0, Math.PI * 2); ctx.fill();
         ctx.fillStyle = '#fff'; ctx.beginPath(); ctx.arc(sx - 4, sy - 3, 3, 0, Math.PI * 2); ctx.arc(sx + 4, sy - 3, 3, 0, Math.PI * 2); ctx.fill();
         ctx.fillStyle = '#000'; ctx.beginPath(); ctx.arc(sx - 4 + (player.x > e.x ? 1 : -1), sy - 3, 1.5, 0, Math.PI * 2); ctx.arc(sx + 4 + (player.x > e.x ? 1 : -1), sy - 3, 1.5, 0, Math.PI * 2); ctx.fill();
-        ctx.fillStyle = '#fff'; ctx.font = '10px sans-serif'; ctx.textAlign = 'center'; ctx.fillText(e.name, sx, sy - e.size - 8);
-        const hpPct = e.hp / e.maxHp; ctx.fillStyle = 'rgba(0,0,0,0.5)'; ctx.fillRect(sx - 15, sy - e.size - 5, 30, 4); ctx.fillStyle = hpPct > 0.5 ? '#2ecc71' : '#e74c3c'; ctx.fillRect(sx - 15, sy - e.size - 5, 30 * hpPct, 4);
+        ctx.fillStyle = '#fff'; ctx.font = '10px sans-serif'; ctx.textAlign = 'center'; ctx.fillText(e.name || '???', sx, sy - e.size - 8);
+        const hpPct = (e.hp || 0) / (e.maxHp || 1); ctx.fillStyle = 'rgba(0,0,0,0.5)'; ctx.fillRect(sx - 15, sy - e.size - 5, 30, 4); ctx.fillStyle = hpPct > 0.5 ? '#2ecc71' : '#e74c3c'; ctx.fillRect(sx - 15, sy - e.size - 5, 30 * hpPct, 4);
     });
     serverPlayers.forEach(p => {
         if (p.id === myId) return;
@@ -249,14 +344,14 @@ function draw() {
         ctx.fillStyle = 'rgba(0,0,0,0.3)'; ctx.beginPath(); ctx.ellipse(sx, sy + 12, 12, 5, 0, 0, Math.PI * 2); ctx.fill();
         ctx.fillStyle = '#9b59b6'; ctx.beginPath(); ctx.arc(sx, sy, 12, 0, Math.PI * 2); ctx.fill();
         ctx.fillStyle = '#f5cba7'; ctx.beginPath(); ctx.arc(sx, sy - 4, 8, 0, Math.PI * 2); ctx.fill();
-        ctx.fillStyle = '#f39c12'; ctx.font = '11px sans-serif'; ctx.textAlign = 'center'; ctx.fillText(p.name, sx, sy - 20);
-        ctx.fillStyle = '#fff'; ctx.font = '9px sans-serif'; ctx.fillText('Lv.' + p.level, sx, sy + 22);
+        ctx.fillStyle = '#f39c12'; ctx.font = '11px sans-serif'; ctx.textAlign = 'center'; ctx.fillText(p.name || '???', sx, sy - 20);
+        ctx.fillStyle = '#fff'; ctx.font = '9px sans-serif'; ctx.fillText('Lv.' + (p.level || 1), sx, sy + 22);
     });
     if (player && player.hp > 0) {
         const px = player.x - cx, py = player.y - cy;
         ctx.fillStyle = 'rgba(0,0,0,0.3)'; ctx.beginPath(); ctx.ellipse(px, py + 14, 14, 6, 0, 0, Math.PI * 2); ctx.fill();
         if (attackAnim > 0) { ctx.fillStyle = 'rgba(255,255,255,0.3)'; ctx.beginPath(); ctx.arc(px, py, 30 + (10 - attackAnim) * 2, 0, Math.PI * 2); ctx.fill(); }
-        if (skillAnim > 0) { ctx.fillStyle = `rgba(52, 152, 219, ${skillAnim / 40})`; ctx.beginPath(); ctx.arc(px, py, 60 + (20 - skillAnim) * 3, 0, Math.PI * 2); ctx.fill(); }
+        if (skillAnim > 0) { ctx.fillStyle = 'rgba(52, 152, 219, ' + (skillAnim / 40) + ')'; ctx.beginPath(); ctx.arc(px, py, 60 + (20 - skillAnim) * 3, 0, Math.PI * 2); ctx.fill(); }
         ctx.fillStyle = '#3498db'; ctx.beginPath(); ctx.arc(px, py, 14, 0, Math.PI * 2); ctx.fill();
         ctx.fillStyle = '#f5cba7'; ctx.beginPath(); ctx.arc(px, py - 4, 10, 0, Math.PI * 2); ctx.fill();
         ctx.fillStyle = '#5d3a1a'; ctx.beginPath(); ctx.arc(px, py - 8, 10, Math.PI, 0); ctx.fill();
@@ -265,7 +360,7 @@ function draw() {
         lookX = Math.max(-3, Math.min(3, lookX)); lookY = Math.max(-2, Math.min(2, lookY));
         ctx.beginPath(); ctx.arc(px - 4 + lookX, py - 4 + lookY, 3, 0, Math.PI * 2); ctx.arc(px + 4 + lookX, py - 4 + lookY, 3, 0, Math.PI * 2); ctx.fill();
         ctx.fillStyle = '#2c3e50'; ctx.beginPath(); ctx.arc(px - 4 + lookX, py - 4 + lookY, 1.5, 0, Math.PI * 2); ctx.arc(px + 4 + lookX, py - 4 + lookY, 1.5, 0, Math.PI * 2); ctx.fill();
-        ctx.fillStyle = '#f39c12'; ctx.font = 'bold 12px sans-serif'; ctx.textAlign = 'center'; ctx.fillText(player.name + ' (Ты)', px, py - 22);
+        ctx.fillStyle = '#f39c12'; ctx.font = 'bold 12px sans-serif'; ctx.textAlign = 'center'; ctx.fillText((player.name || 'Ты') + ' (Ты)', px, py - 22);
         ctx.fillStyle = '#95a5a6'; ctx.fillRect(px + 10, py + 5, 4, 16); ctx.fillStyle = '#bdc3c7'; ctx.fillRect(px + 8, py + 5, 8, 4);
     }
     particles.forEach(p => { ctx.fillStyle = p.color; ctx.globalAlpha = p.life / 30; ctx.beginPath(); ctx.arc(p.x - cx, p.y - cy, p.size, 0, Math.PI * 2); ctx.fill(); });
@@ -280,8 +375,8 @@ function draw() {
 function addParticles(x, y, color, count) { for (let i = 0; i < count; i++) particles.push({ x, y, vx: (Math.random() - 0.5) * 6, vy: (Math.random() - 0.5) * 6, life: 20 + Math.random() * 20, color, size: 2 + Math.random() * 3 }); }
 function showDamageText(amount, x, y) { const el = document.createElement('div'); el.className = 'damage-text'; el.textContent = '-' + amount; el.style.left = x + 'px'; el.style.top = y + 'px'; document.body.appendChild(el); damageTexts.push({ el, life: 60, y }); }
 function showToast(text) { const el = document.createElement('div'); el.className = 'toast'; el.textContent = text; document.body.appendChild(el); setTimeout(() => el.remove(), 2000); }
-function addChatMessage(msg) { const chat = document.getElementById('chat'); const el = document.createElement('div'); el.className = 'chat-msg'; el.innerHTML = `<span class="name">${msg.name}:</span> ${msg.text}`; chat.appendChild(el); chat.scrollTop = chat.scrollHeight; if (chat.children.length > 20) chat.removeChild(chat.firstChild); }
-function updateUI() { if (!player) return; document.getElementById('hpText').textContent = `${Math.ceil(player.hp)}/${player.maxHp}`; document.getElementById('hpBar').style.width = (player.hp / player.maxHp * 100) + '%'; document.getElementById('mpText').textContent = `${Math.ceil(player.mp)}/${player.maxMp}`; document.getElementById('mpBar').style.width = (player.mp / player.maxMp * 100) + '%'; document.getElementById('levelText').textContent = player.level; document.getElementById('xpText').textContent = `${player.xp}/${player.maxXp}`; document.getElementById('xpBar').style.width = (player.xp / player.maxXp * 100) + '%'; document.getElementById('goldText').textContent = player.gold; document.getElementById('dmgText').textContent = player.damage; document.getElementById('defText').textContent = player.defense; }
+function addChatMessage(msg) { const chat = document.getElementById('chat'); const el = document.createElement('div'); el.className = 'chat-msg'; el.innerHTML = '<span class="name">' + (msg.name || '???') + ':</span> ' + (msg.text || ''); chat.appendChild(el); chat.scrollTop = chat.scrollHeight; if (chat.children.length > 20) chat.removeChild(chat.firstChild); }
+function updateUI() { if (!player) return; document.getElementById('hpText').textContent = Math.ceil(player.hp) + '/' + player.maxHp; document.getElementById('hpBar').style.width = (player.hp / player.maxHp * 100) + '%'; document.getElementById('mpText').textContent = Math.ceil(player.mp) + '/' + player.maxMp; document.getElementById('mpBar').style.width = (player.mp / player.maxMp * 100) + '%'; document.getElementById('levelText').textContent = player.level; document.getElementById('xpText').textContent = player.xp + '/' + player.maxXp; document.getElementById('xpBar').style.width = (player.xp / player.maxXp * 100) + '%'; document.getElementById('goldText').textContent = player.gold; document.getElementById('dmgText').textContent = player.damage; document.getElementById('defText').textContent = player.defense; }
 
 function gameLoop() { update(); draw(); requestAnimationFrame(gameLoop); }
 connect();
