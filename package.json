@@ -1,9 +1,0 @@
-{
-  "name": "mmorpg-client",
-  "scripts": {
-    "start": "npx serve ."
-  },
-  "dependencies": {
-    "serve": "^14.0.0"
-  }
-}
