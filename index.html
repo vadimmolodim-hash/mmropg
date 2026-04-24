@@ -40,8 +40,6 @@
         @keyframes toastOut { to { opacity: 0; transform: translate(-50%, -150%) scale(1); } }
         .damage-text { position: fixed; color: #e74c3c; font-size: 18px; font-weight: bold; text-shadow: 0 0 4px #000; pointer-events: none; animation: dmgFloat 1s ease-out forwards; z-index: 30; }
         @keyframes dmgFloat { 0% { opacity: 1; transform: translateY(0); } 100% { opacity: 0; transform: translateY(-40px); } }
-        #debug-info { position: fixed; top: 50%; left: 50%; transform: translate(-50%, -50%); background: rgba(0,0,0,0.9); color: #fff; padding: 20px; border-radius: 12px; font-size: 14px; z-index: 200; max-width: 80%; word-break: break-all; }
-        #debug-info button { margin-top: 10px; }
     </style>
 </head>
 <body>
@@ -77,18 +75,7 @@
     <div id="chat"></div>
 
 <script>
-// ============================================
-// 🔧 КОНФИГ - ЗАМЕНИ НА СВОЙ URL СЕРВЕРА!
-// ============================================
-const SERVER_URL = 'https://mmorpg-server-production.up.railway.app'; // <-- ВСТАВЬ URL СВОЕГО СЕРВЕРА (НЕ КЛИЕНТА!)
-
-// Проверка URL
-if (SERVER_URL.includes('твой') || SERVER_URL.includes('mmropg-production')) {
-    console.error('❌ ОШИБКА: Нужно указать URL СЕРВЕРА, а не клиента!');
-    console.error('Текущий URL:', SERVER_URL);
-    document.getElementById('loading').innerHTML = '<div id="debug-info"><div style="color:#e74c3c;font-size:18px;margin-bottom:10px;">❌ Неправильный URL сервера!</div><div>Текущий: <code>' + SERVER_URL + '</code></div><br><div style="color:#888;">Нужно указать URL проекта с server.js (Node.js),<br>а не проекта с index.html (клиент).</div><br><div style="color:#f39c12;">В Railway должно быть ДВА проекта:<br>1. Сервер (Node.js)<br>2. Клиент (HTML)</div><br><button class="btn-primary" onclick="location.reload()">Перезагрузить</button></div>';
-    throw new Error('Wrong server URL');
-}
+const SERVER_URL = 'https://mmorpg-server-production.up.railway.app';
 
 console.log('🎮 Connecting to:', SERVER_URL);
 
@@ -102,7 +89,6 @@ if (window.Telegram && window.Telegram.WebApp) {
     console.log('✅ Telegram WebApp detected');
 } else {
     console.warn('⚠️ Not in Telegram, using test data');
-    // Тестовые данные для разработки
     initData = 'user=%7B%22id%22%3A123456789%2C%22first_name%22%3A%22TestPlayer%22%2C%22username%22%3A%22test%22%7D&hash=test&auth_date=' + Math.floor(Date.now()/1000);
 }
 
@@ -122,12 +108,15 @@ let joystick = { active: false, dx: 0, dy: 0 };
 
 function connect() {
     console.log('🔌 Connecting to server...');
-    document.getElementById('loading-text').textContent = 'Подключение к ' + SERVER_URL + '...';
+    document.getElementById('loading-text').textContent = 'Подключение...';
 
     try {
+        // Используем ТОЛЬКО polling (без websocket) для Railway
         socket = io(SERVER_URL, {
-            timeout: 10000,
-            transports: ['websocket', 'polling']
+            timeout: 20000,
+            transports: ['polling'],  // <-- ТОЛЬКО polling, без websocket!
+            upgrade: false,
+            rememberUpgrade: false
         });
     } catch (e) {
         console.error('❌ Failed to create socket:', e);
@@ -136,7 +125,7 @@ function connect() {
     }
 
     socket.on('connect', () => {
-        console.log('✅ Socket connected');
+        console.log('✅ Socket connected! Transport:', socket.io.engine.transport.name);
         document.getElementById('loading-text').textContent = 'Авторизация...';
         socket.emit('auth', { initData });
     });
@@ -286,7 +275,6 @@ function update() {
 function draw() {
     const W = canvas.width, H = canvas.height;
 
-    // Если игрок не загружен - рисуем экран загрузки
     if (!player) {
         ctx.fillStyle = '#0a0a1a';
         ctx.fillRect(0, 0, W, H);
