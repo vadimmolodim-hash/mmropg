@@ -1,0 +1,291 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+    <title>MMORPG Telegram</title>
+    <script src="https://cdn.socket.io/4.7.4/socket.io.min.js"></script>
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
+        body { background: #0a0a1a; overflow: hidden; touch-action: none; font-family: 'Segoe UI', system-ui, sans-serif; user-select: none; }
+        #gameCanvas { display: block; background: #1a3a1a; }
+        #ui { position: fixed; top: 0; left: 0; right: 0; pointer-events: none; z-index: 10; }
+        .bar-container { background: rgba(0,0,0,0.7); padding: 8px 12px; border-radius: 0 0 12px 0; display: inline-block; }
+        .bar { width: 160px; height: 14px; background: rgba(0,0,0,0.5); border-radius: 7px; overflow: hidden; margin: 3px 0; border: 1px solid rgba(255,255,255,0.1); }
+        .bar-fill { height: 100%; border-radius: 7px; transition: width 0.2s; }
+        .hp-fill { background: linear-gradient(90deg, #e74c3c, #c0392b); }
+        .mp-fill { background: linear-gradient(90deg, #3498db, #2980b9); }
+        .xp-fill { background: linear-gradient(90deg, #f39c12, #e67e22); }
+        .bar-label { color: #fff; font-size: 11px; display: flex; justify-content: space-between; }
+        #stats { position: fixed; top: 8px; right: 8px; background: rgba(0,0,0,0.7); padding: 8px 12px; border-radius: 12px; color: #fff; font-size: 12px; pointer-events: none; }
+        #stats div { margin: 2px 0; }
+        #minimap { position: fixed; top: 8px; right: 8px; width: 120px; height: 120px; background: rgba(0,0,0,0.8); border: 2px solid rgba(255,255,255,0.2); border-radius: 8px; pointer-events: none; }
+        #joystick-zone { position: fixed; bottom: 20px; left: 20px; width: 140px; height: 140px; z-index: 20; }
+        #joystick-base { position: absolute; width: 100px; height: 100px; background: rgba(255,255,255,0.1); border: 2px solid rgba(255,255,255,0.3); border-radius: 50%; top: 50%; left: 50%; transform: translate(-50%, -50%); }
+        #joystick-knob { position: absolute; width: 44px; height: 44px; background: rgba(255,255,255,0.4); border: 2px solid rgba(255,255,255,0.6); border-radius: 50%; top: 50%; left: 50%; transform: translate(-50%, -50%); transition: transform 0.05s; }
+        #buttons { position: fixed; bottom: 20px; right: 20px; display: flex; flex-direction: column; gap: 10px; z-index: 20; }
+        .game-btn { width: 64px; height: 64px; border-radius: 50%; border: 2px solid rgba(255,255,255,0.3); background: rgba(0,0,0,0.6); color: #fff; font-size: 24px; display: flex; align-items: center; justify-content: center; cursor: pointer; touch-action: manipulation; -webkit-user-select: none; }
+        .game-btn:active { background: rgba(255,255,255,0.2); transform: scale(0.95); }
+        #chat { position: fixed; bottom: 180px; left: 8px; max-width: 280px; max-height: 200px; overflow-y: auto; pointer-events: none; }
+        .chat-msg { background: rgba(0,0,0,0.6); color: #fff; padding: 4px 8px; border-radius: 6px; margin: 2px 0; font-size: 12px; word-break: break-word; }
+        .chat-msg .name { color: #f39c12; font-weight: bold; }
+        #loading, #auth-error, #death-screen { position: fixed; inset: 0; display: flex; flex-direction: column; align-items: center; justify-content: center; background: #0a0a1a; color: #fff; z-index: 100; }
+        #loading.hidden, #auth-error.hidden, #death-screen.hidden { display: none; }
+        .spinner { width: 50px; height: 50px; border: 4px solid rgba(255,255,255,0.1); border-top-color: #f39c12; border-radius: 50%; animation: spin 1s linear infinite; margin-bottom: 20px; }
+        @keyframes spin { to { transform: rotate(360deg); } }
+        .btn-primary { padding: 12px 32px; background: #f39c12; color: #fff; border: none; border-radius: 8px; font-size: 16px; cursor: pointer; margin-top: 16px; }
+        .btn-primary:active { transform: scale(0.95); }
+        .toast { position: fixed; top: 50%; left: 50%; transform: translate(-50%, -50%); background: rgba(0,0,0,0.9); color: #f39c12; padding: 16px 32px; border-radius: 12px; font-size: 20px; font-weight: bold; z-index: 50; animation: toastIn 0.3s ease, toastOut 0.3s ease 1.7s forwards; pointer-events: none; }
+        @keyframes toastIn { from { opacity: 0; transform: translate(-50%, -50%) scale(0.5); } }
+        @keyframes toastOut { to { opacity: 0; transform: translate(-50%, -150%) scale(1); } }
+        .damage-text { position: fixed; color: #e74c3c; font-size: 18px; font-weight: bold; text-shadow: 0 0 4px #000; pointer-events: none; animation: dmgFloat 1s ease-out forwards; z-index: 30; }
+        @keyframes dmgFloat { 0% { opacity: 1; transform: translateY(0); } 100% { opacity: 0; transform: translateY(-40px); } }
+    </style>
+</head>
+<body>
+    <div id="loading"><div class="spinner"></div><div>Подключение к серверу...</div></div>
+    <div id="auth-error" class="hidden"><div style="font-size:48px;margin-bottom:16px;">🔒</div><div>Ошибка авторизации</div><div style="color:#888;margin-top:8px;font-size:14px;">Откройте игру через Telegram</div></div>
+    <div id="death-screen" class="hidden"><div style="font-size:64px;margin-bottom:16px;">☠️</div><div style="font-size:24px;color:#e74c3c;margin-bottom:8px;">Вы погибли!</div><div id="death-info" style="color:#888;margin-bottom:16px;"></div><button class="btn-primary" onclick="respawn()">Возродиться</button></div>
+    <canvas id="gameCanvas"></canvas>
+    <div id="ui">
+        <div class="bar-container">
+            <div class="bar-label"><span>❤️ HP</span><span id="hpText">100/100</span></div>
+            <div class="bar"><div class="bar-fill hp-fill" id="hpBar" style="width:100%"></div></div>
+            <div class="bar-label"><span>⚡ MP</span><span id="mpText">50/50</span></div>
+            <div class="bar"><div class="bar-fill mp-fill" id="mpBar" style="width:100%"></div></div>
+            <div class="bar-label"><span>⭐ LVL <span id="levelText">1</span></span><span id="xpText">0/100</span></div>
+            <div class="bar"><div class="bar-fill xp-fill" id="xpBar" style="width:0%"></div></div>
+        </div>
+    </div>
+    <div id="stats">
+        <div>💰 <span id="goldText">0</span></div>
+        <div>⚔️ <span id="dmgText">5</span></div>
+        <div>🛡️ <span id="defText">0</span></div>
+        <div>👥 <span id="onlineText">1</span> онлайн</div>
+    </div>
+    <canvas id="minimap"></canvas>
+    <div id="joystick-zone"><div id="joystick-base"></div><div id="joystick-knob"></div></div>
+    <div id="buttons">
+        <button class="game-btn" id="btnSkill">✨</button>
+        <button class="game-btn" id="btnAttack">⚔️</button>
+        <button class="game-btn" id="btnPickup">🎒</button>
+    </div>
+    <div id="chat"></div>
+
+<script>
+const SERVER_URL = 'https://твой-сервер.onrender.com'; // <-- ВСТАВЬ URL СЕРВЕРА
+
+let tg = null, initData = '';
+if (window.Telegram && window.Telegram.WebApp) {
+    tg = window.Telegram.WebApp;
+    tg.expand();
+    tg.setHeaderColor('#0a0a1a');
+    tg.ready();
+    initData = tg.initData;
+}
+
+const canvas = document.getElementById('gameCanvas');
+const ctx = canvas.getContext('2d');
+const mmCanvas = document.getElementById('minimap');
+const mmCtx = mmCanvas.getContext('2d');
+
+function resize() { canvas.width = window.innerWidth; canvas.height = window.innerHeight; mmCanvas.width = 120; mmCanvas.height = 120; }
+resize();
+window.addEventListener('resize', resize);
+
+let socket = null, myId = null, player = null, worldSize = 2000, camera = { x: 0, y: 0 };
+let serverPlayers = [], serverEnemies = [], serverItems = [];
+let particles = [], damageTexts = [], attackAnim = 0, skillAnim = 0;
+let joystick = { active: false, dx: 0, dy: 0 };
+
+function connect() {
+    socket = io(SERVER_URL);
+    socket.on('connect', () => { console.log('Connected'); socket.emit('auth', { initData }); });
+    socket.on('auth_success', (data) => {
+        document.getElementById('loading').classList.add('hidden');
+        player = data.player; myId = player.id; worldSize = data.worldSize;
+        showToast(`Добро пожаловать, ${player.name}!`);
+    });
+    socket.on('auth_error', () => {
+        document.getElementById('loading').classList.add('hidden');
+        document.getElementById('auth-error').classList.remove('hidden');
+    });
+    socket.on('world_update', (state) => {
+        serverPlayers = state.players; serverEnemies = state.enemies; serverItems = state.items;
+        const me = state.players.find(p => p.id === myId);
+        if (me) { player.hp = me.hp; player.maxHp = me.maxHp; player.level = me.level; updateUI(); }
+        document.getElementById('onlineText').textContent = state.players.length;
+    });
+    socket.on('damage_taken', (data) => {
+        showDamageText(data.amount, canvas.width / 2, canvas.height / 2 - 30);
+        canvas.style.transform = 'translate(3px, 3px)'; setTimeout(() => canvas.style.transform = '', 50);
+    });
+    socket.on('enemy_killed', (data) => { showToast(`+${data.xp} XP, +${data.gold} 💰`); addParticles(player.x, player.y, '#f1c40f', 10); });
+    socket.on('level_up', (data) => { showToast(`🎉 УРОВЕНЬ ${data.level}!`); addParticles(player.x, player.y, '#f39c12', 20); });
+    socket.on('death', (data) => {
+        document.getElementById('death-info').textContent = `Уровень: ${data.level} | Потеряно золота: ${data.goldLost}`;
+        document.getElementById('death-screen').classList.remove('hidden');
+    });
+    socket.on('item_picked', (data) => { showToast(data.type === 'gold' ? `+${data.amount} 💰` : 'Зелье выпито!'); });
+    socket.on('chat_message', (msg) => addChatMessage(msg));
+    socket.on('disconnect', () => {
+        document.getElementById('loading').classList.remove('hidden');
+        document.querySelector('#loading div:last-child').textContent = 'Переподключение...';
+    });
+}
+
+const joyZone = document.getElementById('joystick-zone');
+const joyKnob = document.getElementById('joystick-knob');
+let joyStart = { x: 0, y: 0 };
+
+joyZone.addEventListener('touchstart', (e) => {
+    e.preventDefault();
+    const touch = e.touches[0];
+    const rect = joyZone.getBoundingClientRect();
+    joyStart.x = rect.left + rect.width / 2;
+    joyStart.y = rect.top + rect.height / 2;
+    joystick.active = true;
+    updateJoystick(touch.clientX, touch.clientY);
+});
+joyZone.addEventListener('touchmove', (e) => { e.preventDefault(); if (!joystick.active) return; updateJoystick(e.touches[0].clientX, e.touches[0].clientY); });
+joyZone.addEventListener('touchend', (e) => { e.preventDefault(); joystick.active = false; joystick.dx = 0; joystick.dy = 0; joyKnob.style.transform = 'translate(-50%, -50%)'; });
+
+function updateJoystick(x, y) {
+    const maxDist = 35;
+    let dx = x - joyStart.x, dy = y - joyStart.y;
+    const dist = Math.hypot(dx, dy);
+    if (dist > maxDist) { dx = (dx / dist) * maxDist; dy = (dy / dist) * maxDist; }
+    joyKnob.style.transform = `translate(calc(-50% + ${dx}px), calc(-50% + ${dy}px))`;
+    if (dist > 5) { joystick.dx = dx / maxDist; joystick.dy = dy / maxDist; }
+    else { joystick.dx = 0; joystick.dy = 0; }
+}
+
+const keys = {};
+document.addEventListener('keydown', e => { keys[e.code] = true; if (e.code === 'Space') useSkill(); if (e.code === 'KeyE') pickup(); });
+document.addEventListener('keyup', e => keys[e.code] = false);
+
+let mouseX = 0, mouseY = 0;
+canvas.addEventListener('mousemove', e => { mouseX = e.clientX; mouseY = e.clientY; });
+canvas.addEventListener('mousedown', () => attack());
+
+document.getElementById('btnAttack').addEventListener('touchstart', (e) => { e.preventDefault(); attack(); });
+document.getElementById('btnAttack').addEventListener('mousedown', attack);
+document.getElementById('btnSkill').addEventListener('touchstart', (e) => { e.preventDefault(); useSkill(); });
+document.getElementById('btnSkill').addEventListener('mousedown', useSkill);
+document.getElementById('btnPickup').addEventListener('touchstart', (e) => { e.preventDefault(); pickup(); });
+document.getElementById('btnPickup').addEventListener('mousedown', pickup);
+
+function attack() { if (!socket || !player) return; attackAnim = 10; socket.emit('attack', { targetX: camera.x + canvas.width / 2 + (joystick.dx * 100), targetY: camera.y + canvas.height / 2 + (joystick.dy * 100) }); }
+function useSkill() { if (!socket || !player) return; skillAnim = 20; socket.emit('skill'); }
+function pickup() { if (!socket || !player) return; socket.emit('pickup'); }
+function respawn() { document.getElementById('death-screen').classList.add('hidden'); player.hp = player.maxHp; player.x = worldSize / 2; player.y = worldSize / 2; }
+
+function update() {
+    if (!player || player.hp <= 0) return;
+    let dx = 0, dy = 0;
+    if (joystick.active) { dx = joystick.dx; dy = joystick.dy; }
+    if (keys['KeyW'] || keys['ArrowUp']) dy -= 1;
+    if (keys['KeyS'] || keys['ArrowDown']) dy += 1;
+    if (keys['KeyA'] || keys['ArrowLeft']) dx -= 1;
+    if (keys['KeyD'] || keys['ArrowRight']) dx += 1;
+    if (dx !== 0 || dy !== 0) {
+        const len = Math.hypot(dx, dy);
+        dx /= len; dy /= len;
+        if (socket) socket.emit('move', { dx, dy });
+        player.x += dx * 4; player.y += dy * 4;
+    }
+    camera.x = player.x - canvas.width / 2;
+    camera.y = player.y - canvas.height / 2;
+    camera.x = Math.max(0, Math.min(worldSize - canvas.width, camera.x));
+    camera.y = Math.max(0, Math.min(worldSize - canvas.height, camera.y));
+    if (attackAnim > 0) attackAnim--;
+    if (skillAnim > 0) skillAnim--;
+    for (let i = particles.length - 1; i >= 0; i--) { particles[i].life--; particles[i].x += particles[i].vx; particles[i].y += particles[i].vy; if (particles[i].life <= 0) particles.splice(i, 1); }
+    for (let i = damageTexts.length - 1; i >= 0; i--) { damageTexts[i].life--; damageTexts[i].y -= 1; if (damageTexts[i].life <= 0) { damageTexts[i].el.remove(); damageTexts.splice(i, 1); } }
+}
+
+function draw() {
+    const W = canvas.width, H = canvas.height, cx = camera.x, cy = camera.y;
+    ctx.fillStyle = '#2d5a27'; ctx.fillRect(0, 0, W, H);
+    ctx.fillStyle = '#3d6b32';
+    const gridSize = 40, startX = Math.floor(cx / gridSize) * gridSize, startY = Math.floor(cy / gridSize) * gridSize;
+    for (let x = startX; x < cx + W + gridSize; x += gridSize) {
+        for (let y = startY; y < cy + H + gridSize; y += gridSize) {
+            if ((x / gridSize + y / gridSize) % 2 === 0) ctx.fillRect(x - cx, y - cy, gridSize, gridSize);
+        }
+    }
+    const seed = (x, y) => { let n = Math.sin(x * 12.9898 + y * 78.233) * 43758.5453; return n - Math.floor(n); };
+    for (let x = startX; x < cx + W + 60; x += 60) {
+        for (let y = startY; y < cy + H + 60; y += 60) {
+            if (seed(x, y) > 0.7) {
+                const tx = x + (seed(x + 1, y) - 0.5) * 40, ty = y + (seed(x, y + 1) - 0.5) * 40, size = 15 + seed(x + 2, y) * 10;
+                ctx.fillStyle = 'rgba(0,0,0,0.2)'; ctx.beginPath(); ctx.ellipse(tx - cx, ty - cy + size * 0.7, size * 0.7, size * 0.25, 0, 0, Math.PI * 2); ctx.fill();
+                ctx.fillStyle = '#5d3a1a'; ctx.fillRect(tx - cx - 3, ty - cy, 6, size * 0.6);
+                ctx.fillStyle = seed(x, y + 2) > 0.5 ? '#1e5631' : '#27ae60'; ctx.beginPath(); ctx.arc(tx - cx, ty - cy - size * 0.3, size * 0.7, 0, Math.PI * 2); ctx.fill();
+            }
+        }
+    }
+    serverItems.forEach(item => {
+        const sx = item.x - cx, sy = item.y - cy;
+        if (sx < -20 || sx > W + 20 || sy < -20 || sy > H + 20) return;
+        const pulse = Math.sin(Date.now() * 0.005) * 3;
+        ctx.font = '18px sans-serif'; ctx.textAlign = 'center'; ctx.fillText(item.icon, sx, sy + pulse);
+        ctx.strokeStyle = 'rgba(255,255,255,0.2)'; ctx.lineWidth = 1; ctx.beginPath(); ctx.arc(sx, sy, 10 + pulse * 0.3, 0, Math.PI * 2); ctx.stroke();
+    });
+    serverEnemies.forEach(e => {
+        const sx = e.x - cx, sy = e.y - cy;
+        if (sx < -50 || sx > W + 50 || sy < -50 || sy > H + 50) return;
+        ctx.fillStyle = 'rgba(0,0,0,0.2)'; ctx.beginPath(); ctx.ellipse(sx, sy + e.size * 0.8, e.size * 0.8, e.size * 0.25, 0, 0, Math.PI * 2); ctx.fill();
+        ctx.fillStyle = e.hitFlash > 0 ? '#fff' : e.color; ctx.beginPath(); ctx.arc(sx, sy, e.size, 0, Math.PI * 2); ctx.fill();
+        ctx.fillStyle = '#fff'; ctx.beginPath(); ctx.arc(sx - 4, sy - 3, 3, 0, Math.PI * 2); ctx.arc(sx + 4, sy - 3, 3, 0, Math.PI * 2); ctx.fill();
+        ctx.fillStyle = '#000'; ctx.beginPath(); ctx.arc(sx - 4 + (player.x > e.x ? 1 : -1), sy - 3, 1.5, 0, Math.PI * 2); ctx.arc(sx + 4 + (player.x > e.x ? 1 : -1), sy - 3, 1.5, 0, Math.PI * 2); ctx.fill();
+        ctx.fillStyle = '#fff'; ctx.font = '10px sans-serif'; ctx.textAlign = 'center'; ctx.fillText(e.name, sx, sy - e.size - 8);
+        const hpPct = e.hp / e.maxHp; ctx.fillStyle = 'rgba(0,0,0,0.5)'; ctx.fillRect(sx - 15, sy - e.size - 5, 30, 4); ctx.fillStyle = hpPct > 0.5 ? '#2ecc71' : '#e74c3c'; ctx.fillRect(sx - 15, sy - e.size - 5, 30 * hpPct, 4);
+    });
+    serverPlayers.forEach(p => {
+        if (p.id === myId) return;
+        const sx = p.x - cx, sy = p.y - cy;
+        if (sx < -30 || sx > W + 30 || sy < -30 || sy > H + 30) return;
+        ctx.fillStyle = 'rgba(0,0,0,0.3)'; ctx.beginPath(); ctx.ellipse(sx, sy + 12, 12, 5, 0, 0, Math.PI * 2); ctx.fill();
+        ctx.fillStyle = '#9b59b6'; ctx.beginPath(); ctx.arc(sx, sy, 12, 0, Math.PI * 2); ctx.fill();
+        ctx.fillStyle = '#f5cba7'; ctx.beginPath(); ctx.arc(sx, sy - 4, 8, 0, Math.PI * 2); ctx.fill();
+        ctx.fillStyle = '#f39c12'; ctx.font = '11px sans-serif'; ctx.textAlign = 'center'; ctx.fillText(p.name, sx, sy - 20);
+        ctx.fillStyle = '#fff'; ctx.font = '9px sans-serif'; ctx.fillText('Lv.' + p.level, sx, sy + 22);
+    });
+    if (player && player.hp > 0) {
+        const px = player.x - cx, py = player.y - cy;
+        ctx.fillStyle = 'rgba(0,0,0,0.3)'; ctx.beginPath(); ctx.ellipse(px, py + 14, 14, 6, 0, 0, Math.PI * 2); ctx.fill();
+        if (attackAnim > 0) { ctx.fillStyle = 'rgba(255,255,255,0.3)'; ctx.beginPath(); ctx.arc(px, py, 30 + (10 - attackAnim) * 2, 0, Math.PI * 2); ctx.fill(); }
+        if (skillAnim > 0) { ctx.fillStyle = `rgba(52, 152, 219, ${skillAnim / 40})`; ctx.beginPath(); ctx.arc(px, py, 60 + (20 - skillAnim) * 3, 0, Math.PI * 2); ctx.fill(); }
+        ctx.fillStyle = '#3498db'; ctx.beginPath(); ctx.arc(px, py, 14, 0, Math.PI * 2); ctx.fill();
+        ctx.fillStyle = '#f5cba7'; ctx.beginPath(); ctx.arc(px, py - 4, 10, 0, Math.PI * 2); ctx.fill();
+        ctx.fillStyle = '#5d3a1a'; ctx.beginPath(); ctx.arc(px, py - 8, 10, Math.PI, 0); ctx.fill();
+        ctx.fillStyle = '#fff'; let lookX = joystick.dx * 3, lookY = joystick.dy * 2;
+        if (!joystick.active) { lookX = (mouseX - W / 2) * 0.01; lookY = (mouseY - H / 2) * 0.01; }
+        lookX = Math.max(-3, Math.min(3, lookX)); lookY = Math.max(-2, Math.min(2, lookY));
+        ctx.beginPath(); ctx.arc(px - 4 + lookX, py - 4 + lookY, 3, 0, Math.PI * 2); ctx.arc(px + 4 + lookX, py - 4 + lookY, 3, 0, Math.PI * 2); ctx.fill();
+        ctx.fillStyle = '#2c3e50'; ctx.beginPath(); ctx.arc(px - 4 + lookX, py - 4 + lookY, 1.5, 0, Math.PI * 2); ctx.arc(px + 4 + lookX, py - 4 + lookY, 1.5, 0, Math.PI * 2); ctx.fill();
+        ctx.fillStyle = '#f39c12'; ctx.font = 'bold 12px sans-serif'; ctx.textAlign = 'center'; ctx.fillText(player.name + ' (Ты)', px, py - 22);
+        ctx.fillStyle = '#95a5a6'; ctx.fillRect(px + 10, py + 5, 4, 16); ctx.fillStyle = '#bdc3c7'; ctx.fillRect(px + 8, py + 5, 8, 4);
+    }
+    particles.forEach(p => { ctx.fillStyle = p.color; ctx.globalAlpha = p.life / 30; ctx.beginPath(); ctx.arc(p.x - cx, p.y - cy, p.size, 0, Math.PI * 2); ctx.fill(); });
+    ctx.globalAlpha = 1;
+    mmCtx.fillStyle = 'rgba(0,0,0,0.8)'; mmCtx.fillRect(0, 0, 120, 120);
+    const scale = 120 / worldSize;
+    mmCtx.fillStyle = '#9b59b6'; serverPlayers.forEach(p => { if (p.id !== myId) mmCtx.fillRect(p.x * scale - 1, p.y * scale - 1, 3, 3); });
+    mmCtx.fillStyle = '#3498db'; mmCtx.fillRect(player.x * scale - 2, player.y * scale - 2, 5, 5);
+    mmCtx.strokeStyle = 'rgba(255,255,255,0.3)'; mmCtx.lineWidth = 1; mmCtx.strokeRect(camera.x * scale, camera.y * scale, canvas.width * scale, canvas.height * scale);
+}
+
+function addParticles(x, y, color, count) { for (let i = 0; i < count; i++) particles.push({ x, y, vx: (Math.random() - 0.5) * 6, vy: (Math.random() - 0.5) * 6, life: 20 + Math.random() * 20, color, size: 2 + Math.random() * 3 }); }
+function showDamageText(amount, x, y) { const el = document.createElement('div'); el.className = 'damage-text'; el.textContent = '-' + amount; el.style.left = x + 'px'; el.style.top = y + 'px'; document.body.appendChild(el); damageTexts.push({ el, life: 60, y }); }
+function showToast(text) { const el = document.createElement('div'); el.className = 'toast'; el.textContent = text; document.body.appendChild(el); setTimeout(() => el.remove(), 2000); }
+function addChatMessage(msg) { const chat = document.getElementById('chat'); const el = document.createElement('div'); el.className = 'chat-msg'; el.innerHTML = `<span class="name">${msg.name}:</span> ${msg.text}`; chat.appendChild(el); chat.scrollTop = chat.scrollHeight; if (chat.children.length > 20) chat.removeChild(chat.firstChild); }
+function updateUI() { if (!player) return; document.getElementById('hpText').textContent = `${Math.ceil(player.hp)}/${player.maxHp}`; document.getElementById('hpBar').style.width = (player.hp / player.maxHp * 100) + '%'; document.getElementById('mpText').textContent = `${Math.ceil(player.mp)}/${player.maxMp}`; document.getElementById('mpBar').style.width = (player.mp / player.maxMp * 100) + '%'; document.getElementById('levelText').textContent = player.level; document.getElementById('xpText').textContent = `${player.xp}/${player.maxXp}`; document.getElementById('xpBar').style.width = (player.xp / player.maxXp * 100) + '%'; document.getElementById('goldText').textContent = player.gold; document.getElementById('dmgText').textContent = player.damage; document.getElementById('defText').textContent = player.defense; }
+
+function gameLoop() { update(); draw(); requestAnimationFrame(gameLoop); }
+connect();
+gameLoop();
+</script>
+</body>
+</html>
